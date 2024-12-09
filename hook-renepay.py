@@ -26,6 +26,40 @@ renepay_param_match = {'bolt11': ('invstring', identity),
     # TODO: transform maxfeepercent and exemptfee to maxfee
     }
 
+def msat(s):
+    # ends in msat?
+    if len(s)>=4 and s[-4:]=='msat':
+        return float(s[:-4])
+    if len(s)>=3 and s[-3:]=='sat':
+        return float(s[:-3])*1000
+    if len(s)>=3 and s[-3:]=='btc':
+        return float(s[:-3])*1000*1e8
+    return float(s)
+
+
+def amount_msat_from_bolt11(inv):
+    for i, c in enumerate(inv):
+        if c.isdigit():
+            pos = i
+            break
+    inv = inv[pos:]
+    for i, c in enumerate(inv):
+        if not c.isdigit():
+            pos = i
+            break
+    value = float(inv[:pos])
+    multiplier = inv[pos]
+    M = 1
+    if multiplier=='m':
+        M = 1e-3
+    if multiplier=='u':
+        M = 1e-6
+    if multiplier=='n':
+        M = 1e-9
+    if multiplier=='p':
+        M = 1e-12
+    return value * M * 1e8 * 1000
+
 
 def param_from_list(param_list, param_names):
     N = len(param_list)
@@ -59,6 +93,25 @@ def replace_pay(rpc):
             renepay_params[name] = transf(old_value)
         # otherwise we discard
     
+    # compute maxfee adhoc
+    maxfee_msat = None
+    amount_msat = None
+    if 'amount_msat' in pay_params:
+        amount_msat = msat(pay_params['amount_msat'])
+    else:
+        amount_msat = amount_msat_from_bolt11(pay_params['bolt11'])
+    if 'maxfee' in pay_params:
+        maxfee_msat = msat(pay_params['maxfee'])
+    if 'maxfeepercent' in pay_params and amount_msat!=None:
+        maxfeepercent_msat = 0.01*float(pay_params['maxfeepercent'])*amount_msat
+        if maxfee_msat==None or maxfee_msat<maxfeepercent_msat:
+            maxfee_msat = maxfeepercent_msat
+    if 'exemptfee' in pay_params:
+        exemptfee_msat = msat(pay_params['exemptfee'])
+        if maxfee_msat==None or maxfee_msat<exemptfee_msat:
+            maxfee_msat = exemptfee_msat
+    if maxfee_msat!=None:
+        renepay_params['maxfee'] = str(int(maxfee_msat))
     # compulsory argument
     assert 'invstring' in renepay_params
     rpc['params']=renepay_params
